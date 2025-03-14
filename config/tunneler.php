@@ -2,6 +2,8 @@
 return [
 
     'verify_process' => env('TUNNELER_VERIFY_PROCESS', 'nc'),
+    'create' => env('TUNNELER_CREATE', 'exec'),
+    'destroy_process' => env('TUNNELER_DESTROY_PROCESS', 'pkill'),
 
     'nc_path' => env('TUNNELER_NC_PATH', 'nc'),
     'bash_path' => env('TUNNELER_BASH_PATH', 'bash'),

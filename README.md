@@ -23,8 +23,17 @@ composer require prodigyphp/laravel-ssh-tunnel
 All configuration can and should be done in your `.env` file.
 ```env
 # Process used to verify connection
-# Use bash if your distro uses nmap-ncat (RHEL/CentOS 7.x) 
+# Possible options: nc, bash, php
+# Use bash or php if your distro uses nmap-ncat (RHEL/CentOS 7.x) 
 TUNNELER_VERIFY_PROCESS=nc
+# Function used create connection 
+# "exec" is default behavior, creating tunnel with exec and using nohup to decouple it from PHP Process
+# "popen" uses php build in function popen to run in background - dose not depend on nohup
+TUNNELER_CREATE=exec
+# How to destroy tunnel
+# if pkill command is available use "pkill", if you have access to "ps" you can use "php"
+TUNNELER_DESTROY_PROCESS=pkill
+
 
 # Path to the nc executable
 TUNNELER_NC_PATH=/usr/bin/nc

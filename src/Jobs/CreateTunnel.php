@@ -79,13 +79,45 @@ class CreateTunnel
      */
     protected function createTunnel()
     {
-        $this->runCommand(sprintf('%s %s >> %s 2>&1 &',
-            config('tunneler.nohup_path'),
-            $this->sshCommand,
-            config('tunneler.nohup_log')
-        ));
-        // Ensure we wait long enough for it to actually connect.
+        if (config('tunneler.create') && config('tunneler.create') === 'exec') {
+            $logPath = config('tunneler.nohup_log');
+
+            $command = sprintf('%s >> %s 2>&1 &', $this->sshCommand, $logPath);
+
+            // make nohup optional
+            if (config('tunneler.nohup_path')) {
+                $command = sprintf('%s %s >> %s 2>&1 &', config('tunneler.nohup_path'), $this->sshCommand, $logPath);
+            }
+
+            $this->runCommand($command);
+        } else {
+            $this->createTunnelPOpen();
+        }
+
+
         usleep(config('tunneler.wait'));
+    }
+
+    /**
+     * Starts the SSH Tunnel using proc_open().
+     */
+    protected function createTunnelPOpen()
+    {
+        $descriptorspec = [
+            0 => ['pipe', 'r'], // Standard Input
+            1 => ['file', config('tunneler.nohup_log'), 'a'], // Standard Output
+            2 => ['file', config('tunneler.nohup_log'), 'a'], // Standard Error
+        ];
+
+        $process = proc_open(
+            $this->sshCommand,
+            $descriptorspec,
+            $pipes
+        );
+
+        if (!is_resource($process)) {
+            throw new \RuntimeException("Unable to start SSH Tunnel process.");
+        }
     }
 
     /**
@@ -94,20 +126,102 @@ class CreateTunnel
      */
     protected function verifyTunnel()
     {
-        if (config('tunneler.verify_process') == 'bash') {
+        $verifyProcess = config('tunneler.verify_process');
+
+        if ($verifyProcess === 'php') {
+            return $this->phpVerifyTunnel();
+        } elseif ($verifyProcess === 'bash') {
             return $this->runCommand($this->bashCommand);
         }
 
         return $this->runCommand($this->ncCommand);
     }
 
+
+    /**
+     * Tunnel-Verify using PHP-Sockets
+     * @return bool
+     */
+    protected function phpVerifyTunnel()
+    {
+        $host = config('tunneler.local_address');
+        $port = config('tunneler.local_port');
+
+        $connection = @fsockopen($host, $port, $errno, $errstr, 1);
+
+        if ($connection) {
+            fclose($connection);
+            return true;
+        }
+
+        return false;
+    }
+
+    public function destroyTunnel(){
+        $destroyProcess = config('tunneler.destroy_process');
+
+        if ($destroyProcess === 'php') {
+            $this->destroyTunnelPhp();
+        } else {
+            $this->destroyTunnelPkill();
+        }
+    }
+
     /*
      * Use pkill to kill the SSH tunnel
      */
 
-    public function destroyTunnel(){
-        $ssh_command = preg_replace('/[\s]{2}[\s]*/',' ',$this->sshCommand);
-        return $this->runCommand('pkill -f "'.$ssh_command.'"');
+    private function destroyTunnelPkill()
+    {
+        $ssh_command = preg_replace('/[\s]{2}[\s]*/', ' ', $this->sshCommand);
+        return $this->runCommand('pkill -f "' . $ssh_command . '"');
+    }
+
+    private function destroyTunnelPhp()
+    {
+        $ssh_command = preg_replace('/[\s]{2}[\s]*/', ' ', $this->sshCommand);
+
+        $descriptorspec = [
+            0 => ['pipe', 'r'], // stdin
+            1 => ['pipe', 'w'], // stdout
+            2 => ['pipe', 'w'], // stderr
+        ];
+
+        $process = proc_open('ps -eo pid,args', $descriptorspec, $pipes);
+
+        // Get all running processes using the "ps aux" command
+        $output = '';
+        if (is_resource($process)) {
+            $output = stream_get_contents($pipes[1]);
+            fclose($pipes[1]);
+
+            proc_close($process);
+        }
+        $output = preg_split("/\r\n|\n|\r/", $output);
+
+        foreach ($output as $line) {
+            // Look for the SSH command in the process list
+            if (strpos($line, $ssh_command) !== false) {
+                // Split the line to extract the PID of the process
+                $parts = preg_split('/\s+/', trim($line));
+
+                if (isset($parts[0]) && is_numeric($parts[0])) {
+                    $pid = (int)$parts[0];
+
+                    // Kill the process with the identified PID
+                    if (posix_kill($pid, SIGKILL)) {
+                        echo "Tunnel process with PID $pid has been terminated.\n";
+                        return true;
+                    } else {
+                        echo "Error occurred while trying to terminate the process with PID $pid.\n";
+                        return false;
+                    }
+                }
+            }
+        }
+
+        echo "No tunnel process found.\n";
+        return false;
     }
 
     /**
